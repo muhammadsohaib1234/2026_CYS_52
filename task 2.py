@@ -1,0 +1,21 @@
+obtained_marks=int(input("enter the number of obtained marks:"))
+if obtained_marks>=90:
+    print("Grade A+:")
+elif obtained_marks>=85:
+    print("Grade A:")
+elif obtained_marks>=80:
+    print("Grade A-:")
+elif obtained_marks>=75:
+    print("Grade B+:")
+elif obtained_marks>=70:
+    print("Grade B:")
+elif obtained_marks>=65:
+    print("Grade B-:")
+elif obtained_marks>=60:
+    print("Grade C+:")
+elif obtained_marks>=55:
+    print("Grade C:")
+elif obtained_marks>=50:
+    print("Grade C-:")
+elif obtained_marks<<50:
+    print("Grade F:")
