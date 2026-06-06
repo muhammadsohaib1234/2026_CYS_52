@@ -1,0 +1,30 @@
+# TASK 1
+s={"ce","cs","ibm","ce"}
+for i in s:
+    if i=="ce":
+        print(i)
+
+#TASK 2
+l={1,2,3,4,5,6,7,8,9}
+l.add("ae")
+print(l)
+
+#TASK 3
+j={2,1,4,3,7,3}
+j.discard(2)
+print(j)
+
+#TASK 4
+j={2,1,4,3,7,3}
+j.discard(9)
+print(j)
+
+#TASK 5
+j={2,1,4,3,7,3}
+j.remove(2)
+print(j)
+
+#TASK 6
+j={2,1,4,3,7,3}
+j.remove(7)
+print(j)
