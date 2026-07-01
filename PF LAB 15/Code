@@ -1,0 +1,387 @@
+import tkinter as tk
+from tkinter import ttk, messagebox, scrolledtext
+import requests
+from datetime import datetime, timedelta
+import threading
+import json
+import os
+from PIL import Image, ImageTk  # pip install pillow
+import webbrowser
+import random
+
+# Note: Requires API key from https://www.weatherapi.com/
+
+API_KEY = "d20c0717271346549e955021260805"
+
+
+class AdvancedWeatherApp:
+    def __init__(self):
+        self.root = tk.Tk()
+        self.root.title("🌤️ Nexus Weather - Advanced Forecast & Environment")
+
+        # Set window to half screen size, centered
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        width = screen_width // 2
+        height = screen_height // 2 + 100
+        x = (screen_width - width) // 2
+        y = (screen_height - height) // 2
+        self.root.geometry(f"{width}x{height}+{x}+{y}")
+
+        self.root.configure(bg="#1e1e2f")
+        self.root.resizable(True, True)
+
+        # Style
+        self.style = ttk.Style()
+        self.style.theme_use("clam")
+
+        self.city_var = tk.StringVar()
+        self.unit_var = tk.StringVar(value="C")
+
+        self.current_data = None
+        self.forecast_data = None
+        self.bg_label = None
+
+        self.create_widgets()
+        self.load_favorites()
+
+        # Auto-detect location on start
+        self.root.after(500, self.auto_detect_location)
+
+    def create_widgets(self):
+        # Main container
+        main_frame = tk.Frame(self.root, bg="#1e1e2f")
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Header
+        header = tk.Frame(main_frame, bg="#2a2a3e")
+        header.pack(fill=tk.X, pady=(0, 10))
+
+        tk.Label(header, text="🌍 Nexus Weather", font=("Helvetica", 24, "bold"),
+                 fg="#00ffcc", bg="#2a2a3e").pack(side=tk.LEFT, padx=15, pady=8)
+
+        # Search bar
+        search_frame = tk.Frame(header, bg="#2a2a3e")
+        search_frame.pack(side=tk.RIGHT, padx=15, pady=8)
+
+        self.city_combo = ttk.Combobox(search_frame, textvariable=self.city_var,
+                                       font=("Helvetica", 12), width=25)
+        self.city_combo['values'] = self.get_city_list()
+        self.city_combo.pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(search_frame, text="🔍 Search", command=self.fetch_all_data).pack(side=tk.LEFT, padx=5)
+        ttk.Button(search_frame, text="📍 Detect", command=self.auto_detect_location).pack(side=tk.LEFT, padx=5)
+
+        # Units toggle
+        unit_frame = tk.Frame(header, bg="#2a2a3e")
+        unit_frame.pack(side=tk.RIGHT, padx=10)
+        tk.Radiobutton(unit_frame, text="°C", variable=self.unit_var, value="C",
+                       bg="#2a2a3e", fg="white", command=self.refresh_display).pack(side=tk.LEFT)
+        tk.Radiobutton(unit_frame, text="°F", variable=self.unit_var, value="F",
+                       bg="#2a2a3e", fg="white", command=self.refresh_display).pack(side=tk.LEFT)
+
+        # Notebook (Tabs)
+        self.notebook = ttk.Notebook(main_frame)
+        self.notebook.pack(fill=tk.BOTH, expand=True)
+
+        # Tab 1: Today + Current
+        self.today_tab = tk.Frame(self.notebook, bg="#1e1e2f")
+        self.notebook.add(self.today_tab, text="🌞 Today")
+
+        # Background image label
+        self.bg_label = tk.Label(self.today_tab, bg="#1e1e2f")
+        self.bg_label.place(relwidth=1, relheight=1)
+
+        self.current_frame = tk.Frame(self.today_tab, bg="#2a2a3e", relief=tk.RAISED, bd=2)
+        self.current_frame.place(relx=0.05, rely=0.05, relwidth=0.9, relheight=0.45)
+
+        self.create_current_widgets()
+
+        # Tab 2: Next 3 Days Forecast
+        self.forecast_tab = tk.Frame(self.notebook, bg="#1e1e2f")
+        self.notebook.add(self.forecast_tab, text="📅 Next 3 Days")
+        self.forecast_container = tk.Frame(self.forecast_tab, bg="#1e1e2f")
+        self.forecast_container.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
+
+        # Tab 3: Air Quality & Pollution
+        self.aqi_tab = tk.Frame(self.notebook, bg="#1e1e2f")
+        self.notebook.add(self.aqi_tab, text="🌫️ Air Quality")
+        self.create_aqi_widgets()
+
+        # Tab 4: Extras
+        self.extras_tab = tk.Frame(self.notebook, bg="#1e1e2f")
+        self.notebook.add(self.extras_tab, text="✨ More")
+        self.create_extras()
+
+        # Status bar
+        self.status = tk.Label(main_frame, text="Ready", bg="#1e1e2f", fg="#888888", anchor=tk.W)
+        self.status.pack(fill=tk.X, side=tk.BOTTOM)
+
+    def create_current_widgets(self):
+        # Current weather display
+        self.loc_label = tk.Label(self.current_frame, text="", font=("Helvetica", 18, "bold"),
+                                  bg="#2a2a3e", fg="white")
+        self.loc_label.pack(pady=8)
+
+        self.icon_label = tk.Label(self.current_frame, text="☀️", font=("Helvetica", 80),
+                                   bg="#2a2a3e")
+        self.icon_label.pack()
+
+        self.temp_label = tk.Label(self.current_frame, text="", font=("Helvetica", 48, "bold"),
+                                   bg="#2a2a3e", fg="#00ffcc")
+        self.temp_label.pack()
+
+        self.cond_label = tk.Label(self.current_frame, text="", font=("Helvetica", 16),
+                                   bg="#2a2a3e", fg="#aaccff")
+        self.cond_label.pack()
+
+        # Details grid
+        details = tk.Frame(self.current_frame, bg="#2a2a3e")
+        details.pack(fill=tk.X, pady=15, padx=20)
+
+        self.details_labels = {}
+        metrics = ["Feels Like", "Humidity", "Wind", "Pressure", "UV", "Visibility"]
+        for i, metric in enumerate(metrics):
+            row = i // 2
+            col = i % 2 * 2
+            tk.Label(details, text=metric + ":", bg="#2a2a3e", fg="#cccccc", anchor="e").grid(
+                row=row, column=col, sticky="e", padx=5, pady=3)
+            lbl = tk.Label(details, text="", bg="#2a2a3e", fg="white", anchor="w", width=12)
+            lbl.grid(row=row, column=col + 1, sticky="w", padx=5, pady=3)
+            self.details_labels[metric] = lbl
+
+    def create_aqi_widgets(self):
+        frame = tk.Frame(self.aqi_tab, bg="#1e1e2f")
+        frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        self.aqi_index = tk.Label(frame, text="AQI: --", font=("Helvetica", 36, "bold"),
+                                  bg="#1e1e2f", fg="#ffcc00")
+        self.aqi_index.pack(pady=20)
+
+        self.pollutants_frame = tk.Frame(frame, bg="#2a2a3e")
+        self.pollutants_frame.pack(fill=tk.X, pady=10)
+
+        self.aqi_desc = tk.Label(frame, text="", font=("Helvetica", 14), wraplength=400,
+                                 bg="#1e1e2f", fg="#aaffaa", justify=tk.LEFT)
+        self.aqi_desc.pack(pady=10)
+
+    def create_extras(self):
+        frame = tk.Frame(self.extras_tab, bg="#1e1e2f")
+        frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        tk.Button(frame, text="⭐ Add to Favorites", font=("Helvetica", 12),
+                  command=self.add_to_favorites, bg="#00cc88", fg="black").pack(pady=8)
+
+        tk.Button(frame, text="🗺️ Open in Maps", command=self.open_maps, bg="#4488ff", fg="white").pack(pady=8)
+
+        tk.Button(frame, text="🌡️ Historical Data (Last 7 days)",
+                  command=self.show_historical_placeholder, bg="#ff8844", fg="white").pack(pady=8)
+
+        self.fav_list = tk.Listbox(frame, height=8, bg="#2a2a3e", fg="white")
+        self.fav_list.pack(fill=tk.X, pady=10)
+        self.fav_list.bind("<Double-Button-1>", lambda e: self.load_favorite())
+
+        # Random tip
+        self.tip_label = tk.Label(frame, text="💡 Pro tip: Double-click favorites",
+                                  fg="#8888ff", bg="#1e1e2f")
+        self.tip_label.pack()
+
+    def get_city_list(self):
+        return [
+            "Lahore", "Karachi", "Islamabad",
+            "Rawalpindi", "Faisalabad", "Multan",
+            "Peshawar", "Quetta", "London",
+            "New York", "Paris", "Tokyo",
+            "Dubai", "Los Angeles", "Chicago",
+            "Miami", "Rome", "Madrid",
+            "Cairo", "Cape Town"
+        ]
+
+    def auto_detect_location(self):
+        try:
+            self.status.config(text="Detecting location...")
+            ip_data = requests.get("https://ipapi.co/json/", timeout=5).json()
+            city = ip_data.get("city", "Lahore")
+            self.city_var.set(city)
+            self.fetch_all_data()
+        except:
+            self.city_var.set("Lahore")
+            self.fetch_all_data()
+
+    def fetch_all_data(self):
+        threading.Thread(target=self._fetch_data_thread, daemon=True).start()
+
+    def _fetch_data_thread(self):
+        city = self.city_var.get().strip()
+        if not city:
+            messagebox.showwarning("Input", "Please enter a city")
+            return
+
+        self.status.config(text=f"Fetching data for {city}...")
+
+        try:
+            # Current + Forecast (includes AQI)
+            url = f"http://api.weatherapi.com/v1/forecast.json?key={API_KEY}&q={city}&days=4&aqi=yes&alerts=yes"
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+
+            self.current_data = data
+            self.forecast_data = data.get("forecast", {}).get("forecastday", [])
+
+            self.root.after(0, self.update_all_ui)
+
+        except Exception as e:
+            self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to fetch data: {str(e)}"))
+            self.status.config(text="Error fetching data")
+
+    def update_all_ui(self):
+        if not self.current_data:
+            return
+
+        # Update Today
+        self.update_current()
+        self.update_forecast()
+        self.update_aqi()
+        self.change_background()
+
+        self.status.config(text=f"Updated at {datetime.now().strftime('%H:%M')}")
+
+    def update_current(self):
+        curr = self.current_data["current"]
+        loc = self.current_data["location"]
+
+        unit = self.unit_var.get()
+        temp = curr["temp_c"] if unit == "C" else curr["temp_f"]
+        feels = curr["feelslike_c"] if unit == "C" else curr["feelslike_f"]
+
+        self.loc_label.config(text=f"{loc['name']}, {loc['country']}")
+        self.temp_label.config(text=f"{temp:.1f}°{unit}")
+        self.cond_label.config(text=curr["condition"]["text"])
+
+        # Emoji icon (simple mapping)
+        icon_map = {"Sunny": "☀️", "Clear": "🌙", "Partly cloudy": "⛅", "Cloudy": "☁️",
+                    "Rain": "🌧️", "Heavy rain": "⛈️", "Snow": "❄️"}
+        icon = icon_map.get(curr["condition"]["text"], "🌥️")
+        self.icon_label.config(text=icon)
+
+        # Details
+        self.details_labels["Feels Like"].config(text=f"{feels:.1f}°{unit}")
+        self.details_labels["Humidity"].config(text=f"{curr['humidity']}%")
+        self.details_labels["Wind"].config(text=f"{curr['wind_kph']} km/h")
+
+
+    def update_forecast(self):
+        for widget in self.forecast_container.winfo_children():
+            widget.destroy()
+
+        for day in self.forecast_data[:4]:  # Today + next 3
+            date = datetime.strptime(day["date"], "%Y-%m-%d")
+            day_name = date.strftime("%a")
+
+            frame = tk.Frame(self.forecast_container, bg="#2a2a3e", relief=tk.RIDGE, bd=2)
+            frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=6, pady=6)
+
+            tk.Label(frame, text=day_name, font=("Helvetica", 14, "bold"),
+                     bg="#2a2a3e", fg="#ffffff").pack(pady=5)
+
+            tk.Label(frame, text=day["day"]["condition"]["text"][:15],
+                     bg="#2a2a3e", fg="#aaccff", wraplength=120).pack()
+
+            unit = self.unit_var.get()
+            maxt = day["day"]["maxtemp_c"] if unit == "C" else day["day"]["maxtemp_f"]
+            mint = day["day"]["mintemp_c"] if unit == "C" else day["day"]["mintemp_f"]
+
+            tk.Label(frame, text=f"↑ {maxt:.0f}°   ↓ {mint:.0f}°",
+                     font=("Helvetica", 16), bg="#2a2a3e", fg="#ffdd88").pack(pady=8)
+
+    def update_aqi(self):
+        if not self.current_data:
+            return
+        aqi_data = self.current_data["current"].get("air_quality", {})
+        if not aqi_data:
+            self.aqi_index.config(text="AQI: N/A")
+            return
+
+        us_aqi = aqi_data.get("us-epa-index", 0)
+        color = "#00ff00"
+        desc = "Good"
+        if us_aqi >= 4:
+            color = "#ff0000"
+            desc = "Unhealthy"
+        elif us_aqi >= 3:
+            color = "#ff8800"
+            desc = "Moderate"
+
+        self.aqi_index.config(text=f"AQI: {us_aqi}", fg=color)
+        self.aqi_desc.config(text=f"Air Quality: {desc}\n\nPM2.5: {aqi_data.get('pm2_5', 'N/A')}\n"
+                                  f"PM10: {aqi_data.get('pm10', 'N/A')}\n"
+                                  f"NO2: {aqi_data.get('no2', 'N/A')}\n"
+                                  f"O3: {aqi_data.get('o3', 'N/A')}")
+
+    def change_background(self):
+        if not self.current_data or not self.bg_label:
+            return
+        cond = self.current_data["current"]["condition"]["text"].lower()
+
+        colors = {
+            "rain": "#334455",
+            "cloud": "#556677",
+            "clear": "#112244",
+            "sunny": "#4488aa"
+        }
+        bg_color = "#1e1e2f"
+        for key, color in colors.items():
+            if key in cond:
+                bg_color = color
+                break
+
+        self.bg_label.config(bg=bg_color)
+        self.today_tab.config(bg=bg_color)
+
+    def load_favorites(self):
+        self.favorites = ["Lahore", "Karachi", "Islamabad"]
+        self.refresh_fav_list()
+
+    def add_to_favorites(self):
+        city = self.city_var.get().strip()
+        if city and city not in self.favorites:
+            self.favorites.append(city)
+            self.refresh_fav_list()
+
+    def refresh_fav_list(self):
+        self.fav_list.delete(0, tk.END)
+        for fav in self.favorites:
+            self.fav_list.insert(tk.END, fav)
+
+    def load_favorite(self):
+        try:
+            sel = self.fav_list.get(self.fav_list.curselection())
+            self.city_var.set(sel)
+            self.fetch_all_data()
+        except:
+            pass
+
+    def open_maps(self):
+        city = self.city_var.get()
+        if city:
+            webbrowser.open(f"https://google.com/maps/search/{city}")
+
+    def show_historical_placeholder(self):
+        messagebox.showinfo("Historical", "Historical data feature coming soon!\n"
+                                          "Would require paid API access or extended free tier.")
+
+    def refresh_display(self):
+        if self.current_data:
+            self.update_current()
+            self.update_forecast()
+
+    def run(self):
+        self.root.mainloop()
+
+
+# =============== RUN THE APP ===============
+if __name__ == "__main__":
+    # Optional: pip install pillow requests
+    app = AdvancedWeatherApp()
+    app.run()
